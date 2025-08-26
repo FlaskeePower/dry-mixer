@@ -1,7 +1,7 @@
 # Dry Mixer — легкий міксер відео (tkinter/ttk)
 # by kremsalkin
 
-import json, os, random, shutil, subprocess, threading, time
+import json, os, random, shutil, subprocess, threading, time, sys
 from pathlib import Path
 from queue import Queue, Empty
 
@@ -76,7 +76,9 @@ def enforce_no_adjacent_duplicates(seq):
 # ---------- Додаток ----------
 class App:
     def __init__(self, root: tk.Tk):
-        root.title("Dry Mixer"); root.geometry("1140x800"); root.minsize(1000,720)
+        root.title("Dry Mixer")
+        root.geometry("1140x700")      # стартовий розмір
+        root.minsize(900, 560)         # мінімальний розмір (менше — користуйся скролом)
         self.root=root
 
         style=ttk.Style()
@@ -89,8 +91,10 @@ class App:
         self.stop_flag=threading.Event(); self.current_proc=None
         self.running=False; self.start_ts=None
 
-        # ------- Ліва панель -------
-        left=ttk.Frame(root, padding=8); left.pack(side=tk.LEFT, fill=tk.Y)
+        # ------- Ліва панель (фіксована) -------
+        left=ttk.Frame(root, padding=8)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+
         lf=ttk.LabelFrame(left, text="Вхідні кліпи"); lf.pack(fill=tk.Y)
         cont=ttk.Frame(lf, padding=6); cont.pack(fill=tk.BOTH, expand=True)
         self.listbox=tk.Listbox(cont, selectmode=tk.EXTENDED, width=58, height=28, activestyle="none")
@@ -99,6 +103,7 @@ class App:
         self.listbox.grid(row=0,column=0,sticky="nsew"); sb.grid(row=0,column=1,sticky="ns")
         cont.columnconfigure(0,weight=1); cont.rowconfigure(0,weight=1)
 
+        # Drag&Drop reorder
         self._drag_data={"idx":None}
         self.listbox.bind("<ButtonPress-1>", self._on_lb_press)
         self.listbox.bind("<B1-Motion>", self._on_lb_motion)
@@ -132,10 +137,55 @@ class App:
         ttk.Checkbutton(left,text="Автозаповнення списку до цільової тривалості",variable=self.autofill)\
             .pack(anchor='w',pady=8)
 
-        # ------- Права панель -------
-        right=ttk.Frame(root,padding=8); right.pack(side=tk.RIGHT,fill=tk.BOTH,expand=True)
+        # ------- Права панель (ПРОКРУЧУВАНА) -------
+        # Canvas + вертикальний Scrollbar + frame всередині canvas
+        right_canvas = tk.Canvas(root, highlightthickness=0)
+        right_vscroll = ttk.Scrollbar(root, orient="vertical", command=right_canvas.yview)
+        right_canvas.configure(yscrollcommand=right_vscroll.set)
 
-        r=ttk.Frame(right); r.pack(fill=tk.X)
+        right = ttk.Frame(right_canvas, padding=8)
+        right_window = right_canvas.create_window((0, 0), window=right, anchor="nw")
+
+        # 1) Перераховуємо scrollregion, коли змінюється ВМІСТ
+        def _on_right_configure(event=None):
+            right_canvas.configure(scrollregion=right_canvas.bbox("all"))
+
+        right.bind("<Configure>", _on_right_configure)
+
+        # 2) Підганяємо ШИРИНУ внутрішнього фрейма під поточну ширину канви
+        def _on_canvas_configure(event):
+            right_canvas.itemconfig(right_window, width=event.width)
+
+        right_canvas.bind("<Configure>", _on_canvas_configure)
+
+        right_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        right_canvas.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        # 3) Після побудови інтерфейсу — один примусовий перерахунок і перемотка вгору
+        def _init_scroll():
+            right.update_idletasks()
+            right_canvas.configure(scrollregion=right_canvas.bbox("all"))
+            right_canvas.itemconfig(right_window, width=right_canvas.winfo_width())
+            right_canvas.yview_moveto(0.0)
+
+        self.root.after(0, _init_scroll)
+
+
+        # підтримка прокрутки колесиком миші/трекпадом
+        def _on_mousewheel(event):
+            # Windows/Mac: event.delta (±120 кратно). Linux: Button-4/5.
+            if event.num == 5 or event.delta < 0:
+                right_canvas.yview_scroll(1, "units")
+            elif event.num == 4 or event.delta > 0:
+                right_canvas.yview_scroll(-1, "units")
+
+        right_canvas.bind_all("<MouseWheel>", _on_mousewheel)      # Windows/Mac
+        right_canvas.bind_all("<Button-4>", _on_mousewheel)        # Linux up
+        right_canvas.bind_all("<Button-5>", _on_mousewheel)        # Linux down
+
+        # ---- нижче будуємо весь контент у 'right' (як і раніше), просто він тепер у прокручуваному фреймі ----
+
+        r = ttk.Frame(right); r.pack(fill=tk.X)
         ttk.Label(r,text="Тривалість:").pack(side=tk.LEFT)
         self.dur_entry=ttk.Entry(r,width=10); self.dur_entry.insert(0,DEFAULT_DURATION); self.dur_entry.pack(side=tk.LEFT)
         self.fixed_duration=tk.IntVar(value=1)
@@ -146,6 +196,9 @@ class App:
         ttk.Label(r,text="Шлях:").pack(side=tk.LEFT,padx=(6,4))
         self.out_entry=ttk.Entry(r,width=62); self.out_entry.insert(0,"output.mp4"); self.out_entry.pack(side=tk.LEFT,pady=6)
         ttk.Button(r,text="…",style="Border.TButton",command=self.pick_outfile).pack(side=tk.LEFT,padx=8)
+        ttk.Button(r, text="Відкрити папку", style="Border.TButton",
+           command=self.open_output_folder).pack(side=tk.LEFT, padx=6)
+
 
         simplef=ttk.Frame(right); simplef.pack(fill=tk.X,pady=4)
         self.same_params=tk.IntVar(value=0)
@@ -157,8 +210,7 @@ class App:
         rv1=ttk.Frame(self.vidf); rv1.pack(fill=tk.X,padx=6,pady=(6,2))
         ttk.Label(rv1,text="Роздільна здатність:").pack(side=tk.LEFT)
         self.res_preset=tk.StringVar(value="Оригінал")
-        ttk.OptionMenu(rv1,self.res_preset,"Оригінал","Оригінал","1280x720","1920x1080","2560x1440","3840x2160")\
-            .pack(side=tk.LEFT,padx=6)
+        ttk.OptionMenu(rv1,self.res_preset,"Оригінал","Оригінал","1280x720","1920x1080","2560x1440","3840x2160").pack(side=tk.LEFT,padx=6)
         rv2=ttk.Frame(self.vidf); rv2.pack(fill=tk.X,padx=6,pady=(2,6))
         ttk.Label(rv2,text="FPS:").pack(side=tk.LEFT)
         self.fps_choice=tk.StringVar(value="Оригінал")
@@ -217,21 +269,21 @@ class App:
         ttk.Label(bottom,text="⏱").pack(side=tk.LEFT,padx=(12,2))
         ttk.Label(bottom,textvariable=self.elapsed_var,anchor="w").pack(side=tk.LEFT)
 
+        # Стартовий банер
         banner = """
-        ============================================================
-                                D R Y   M I X E R
-        ============================================================
+============================================================
+                        D R Y   M I X E R
+============================================================
 
-        🚀 РОБІТЬ ЮТУБ!
+🚀 РОБІТЬ ЮТУБ!
 
-        ------------------------------------------------------------
-                              Допомога автору:
-                         💳 4441 1144 2823 3140
-                        Зв'язатись: @FlaskeePower
-        ------------------------------------------------------------
-        """
+------------------------------------------------------------
+                      Допомога автору:
+                 💳 4441 1144 2823 3140
+                Зв'язатись: @FlaskeePower
+------------------------------------------------------------
+"""
         self.log_write(banner + "\n")
-
         self.root.after(LOG_POLL_MS,self.flush_log)
 
     # ---------- Допоміжні ----------
@@ -343,6 +395,33 @@ class App:
     def pick_outfile(self):
         p=filedialog.asksaveasfilename(defaultextension=".mp4",filetypes=[("MP4","*.mp4")])
         if p: self.out_entry.delete(0,tk.END); self.out_entry.insert(0,p)
+    def open_output_folder(self):
+        path_str = self.out_entry.get().strip()
+        if not path_str:
+            messagebox.showerror("Відкрити папку", "Спочатку вкажіть шлях до вихідного файлу.")
+            return
+
+        try:
+            folder = Path(path_str).expanduser().resolve().parent
+        except Exception as e:
+            messagebox.showerror("Відкрити папку", f"Некоректний шлях: {e}")
+            return
+
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        try:
+            if os.name == "nt":
+                os.startfile(str(folder))                         # Windows
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(folder)])           # macOS
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])       # Linux
+        except Exception as e:
+            messagebox.showerror("Відкрити папку", f"Не вдалося відкрити теку:\n{e}")
+
     def pick_audio(self):
         p=filedialog.askopenfilename(title="Вибери аудіо",
             filetypes=[("Audio","*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus"),("Усі файли","*.*")])
