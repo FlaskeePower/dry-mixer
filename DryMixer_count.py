@@ -1,7 +1,7 @@
 # Dry Mixer — легкий міксер відео (tkinter/ttk)
 # by kremsalkin
 
-import json, os, random, shutil, subprocess, threading, time, sys
+import json, os, sys, random, shutil, subprocess, threading, time
 from pathlib import Path
 from queue import Queue, Empty
 
@@ -40,8 +40,9 @@ def ffprobe_duration(p: Path) -> float:
     except Exception:
         return 0.0
 
-# ---------- Шафли ----------
-def shuffle_full(items): items = list(items); random.shuffle(items); return items
+# ---------- Шафл ----------
+def shuffle_full(items):
+    items=list(items); random.shuffle(items); return items
 
 def infer_block_size(items):
     n=len(items)
@@ -77,13 +78,13 @@ def enforce_no_adjacent_duplicates(seq):
 class App:
     def __init__(self, root: tk.Tk):
         root.title("Dry Mixer")
-        root.geometry("1140x700")      # стартовий розмір
-        root.minsize(900, 560)         # мінімальний розмір (менше — користуйся скролом)
+        root.geometry("1140x700")
+        root.minsize(900,560)
         self.root=root
 
         style=ttk.Style()
         try: style.theme_use("clam")
-        except Exception: pass
+        except: pass
         style.configure("Border.TButton", padding=6, relief="raised", borderwidth=2)
         style.map("Border.TButton", relief=[("pressed","sunken")], background=[("active","#e0e4ff")])
 
@@ -91,9 +92,8 @@ class App:
         self.stop_flag=threading.Event(); self.current_proc=None
         self.running=False; self.start_ts=None
 
-        # ------- Ліва панель (фіксована) -------
-        left=ttk.Frame(root, padding=8)
-        left.pack(side=tk.LEFT, fill=tk.Y)
+        # ------- Ліва (фіксована) -------
+        left=ttk.Frame(root, padding=8); left.pack(side=tk.LEFT, fill=tk.Y)
 
         lf=ttk.LabelFrame(left, text="Вхідні кліпи"); lf.pack(fill=tk.Y)
         cont=ttk.Frame(lf, padding=6); cont.pack(fill=tk.BOTH, expand=True)
@@ -118,13 +118,15 @@ class App:
         ttk.Label(r,text="Дублювати вибране ×").pack(side=tk.LEFT)
         self.dup_sel=ttk.Spinbox(r,from_=2,to=1000,width=6); self.dup_sel.delete(0,tk.END); self.dup_sel.insert(0,"3")
         self.dup_sel.pack(side=tk.LEFT,padx=4)
-        ttk.Button(r,text="× Дублювати вибране",style="Border.TButton",command=self.duplicate_selected).pack(side=tk.LEFT,padx=6)
+        ttk.Button(r,text="× Дублювати вибране",style="Border.TButton",
+                   command=self.duplicate_selected).pack(side=tk.LEFT,padx=6)
 
         r=ttk.Frame(left,padding=(0,6)); r.pack(fill=tk.X)
         ttk.Label(r,text="Дублювати ВЕСЬ список ×").pack(side=tk.LEFT)
         self.dup_all=ttk.Spinbox(r,from_=2,to=1000,width=6); self.dup_all.delete(0,tk.END); self.dup_all.insert(0,"3")
         self.dup_all.pack(side=tk.LEFT,padx=4)
-        ttk.Button(r,text="× Дублювати список",style="Border.TButton",command=self.duplicate_all).pack(side=tk.LEFT,padx=6)
+        ttk.Button(r,text="× Дублювати список",style="Border.TButton",
+                   command=self.duplicate_all).pack(side=tk.LEFT,padx=6)
 
         modef=ttk.LabelFrame(left,text="Режим перемішування"); modef.pack(fill=tk.X,pady=6)
         self.shuffle_mode=tk.StringVar(value="full")
@@ -137,68 +139,63 @@ class App:
         ttk.Checkbutton(left,text="Автозаповнення списку до цільової тривалості",variable=self.autofill)\
             .pack(anchor='w',pady=8)
 
-        # ------- Права панель (ПРОКРУЧУВАНА) -------
-        # Canvas + вертикальний Scrollbar + frame всередині canvas
+        # ------- Права (скрол) -------
         right_canvas = tk.Canvas(root, highlightthickness=0)
         right_vscroll = ttk.Scrollbar(root, orient="vertical", command=right_canvas.yview)
         right_canvas.configure(yscrollcommand=right_vscroll.set)
 
         right = ttk.Frame(right_canvas, padding=8)
-        right_window = right_canvas.create_window((0, 0), window=right, anchor="nw")
+        right_window = right_canvas.create_window((0,0), window=right, anchor="nw")
 
-        # 1) Перераховуємо scrollregion, коли змінюється ВМІСТ
         def _on_right_configure(event=None):
             right_canvas.configure(scrollregion=right_canvas.bbox("all"))
-
         right.bind("<Configure>", _on_right_configure)
 
-        # 2) Підганяємо ШИРИНУ внутрішнього фрейма під поточну ширину канви
         def _on_canvas_configure(event):
             right_canvas.itemconfig(right_window, width=event.width)
-
         right_canvas.bind("<Configure>", _on_canvas_configure)
 
         right_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
         right_canvas.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # 3) Після побудови інтерфейсу — один примусовий перерахунок і перемотка вгору
-        def _init_scroll():
-            right.update_idletasks()
-            right_canvas.configure(scrollregion=right_canvas.bbox("all"))
-            right_canvas.itemconfig(right_window, width=right_canvas.winfo_width())
-            right_canvas.yview_moveto(0.0)
-
-        self.root.after(0, _init_scroll)
-
-
-        # підтримка прокрутки колесиком миші/трекпадом
         def _on_mousewheel(event):
-            # Windows/Mac: event.delta (±120 кратно). Linux: Button-4/5.
-            if event.num == 5 or event.delta < 0:
-                right_canvas.yview_scroll(1, "units")
-            elif event.num == 4 or event.delta > 0:
-                right_canvas.yview_scroll(-1, "units")
+            if event.num==5 or event.delta<0: right_canvas.yview_scroll(1,"units")
+            elif event.num==4 or event.delta>0: right_canvas.yview_scroll(-1,"units")
+        def _bind(_):
+            right_canvas.bind_all("<MouseWheel>",_on_mousewheel)
+            right_canvas.bind_all("<Button-4>",_on_mousewheel)
+            right_canvas.bind_all("<Button-5>",_on_mousewheel)
+        def _unbind(_):
+            right_canvas.unbind_all("<MouseWheel>")
+            right_canvas.unbind_all("<Button-4>")
+            right_canvas.unbind_all("<Button-5>")
+        right_canvas.bind("<Enter>",_bind); right_canvas.bind("<Leave>",_unbind)
 
-        right_canvas.bind_all("<MouseWheel>", _on_mousewheel)      # Windows/Mac
-        right_canvas.bind_all("<Button-4>", _on_mousewheel)        # Linux up
-        right_canvas.bind_all("<Button-5>", _on_mousewheel)        # Linux down
-
-        # ---- нижче будуємо весь контент у 'right' (як і раніше), просто він тепер у прокручуваному фреймі ----
-
-        r = ttk.Frame(right); r.pack(fill=tk.X)
+        # ---- Контент праворуч ----
+        r=ttk.Frame(right); r.pack(fill=tk.X)
         ttk.Label(r,text="Тривалість:").pack(side=tk.LEFT)
         self.dur_entry=ttk.Entry(r,width=10); self.dur_entry.insert(0,DEFAULT_DURATION); self.dur_entry.pack(side=tk.LEFT)
         self.fixed_duration=tk.IntVar(value=1)
-        ttk.Checkbutton(r,text="Фіксована тривалість",variable=self.fixed_duration).pack(side=tk.LEFT,padx=8)
+        ttk.Checkbutton(r,text="Фіксована тривалість",variable=self.fixed_duration)\
+            .pack(side=tk.LEFT,padx=8)
         ttk.Label(r,text=" (H:MM:SS або MM:SS)").pack(side=tk.LEFT)
 
-        r=ttk.LabelFrame(right,text="Вихідний файл"); r.pack(fill=tk.X,pady=6)
-        ttk.Label(r,text="Шлях:").pack(side=tk.LEFT,padx=(6,4))
-        self.out_entry=ttk.Entry(r,width=62); self.out_entry.insert(0,"output.mp4"); self.out_entry.pack(side=tk.LEFT,pady=6)
-        ttk.Button(r,text="…",style="Border.TButton",command=self.pick_outfile).pack(side=tk.LEFT,padx=8)
-        ttk.Button(r, text="Відкрити папку", style="Border.TButton",
-           command=self.open_output_folder).pack(side=tk.LEFT, padx=6)
+        row2=ttk.LabelFrame(right,text="Вихідний файл"); row2.pack(fill=tk.X,pady=6)
+        ttk.Label(row2,text="Шлях:").pack(side=tk.LEFT,padx=(6,4))
+        self.out_entry=ttk.Entry(row2,width=62); self.out_entry.insert(0,"output.mp4"); self.out_entry.pack(side=tk.LEFT,pady=6)
+        ttk.Button(row2,text="…",style="Border.TButton",command=self.pick_outfile).pack(side=tk.LEFT,padx=8)
+        ttk.Button(row2,text="Відкрити папку",style="Border.TButton",
+                   command=self.open_output_folder).pack(side=tk.LEFT,padx=6)
 
+        # Пакетна збірка
+        batchf=ttk.LabelFrame(right,text="Пакетна збірка"); batchf.pack(fill=tk.X,pady=(0,6))
+        ttk.Label(batchf,text="Кількість компіляцій:").pack(side=tk.LEFT,padx=(8,4))
+        self.batch_spin=ttk.Spinbox(batchf,from_=1,to=100,width=6)
+        self.batch_spin.delete(0,tk.END); self.batch_spin.insert(0,"1")
+        self.batch_spin.pack(side=tk.LEFT,padx=(0,12))
+        self.batch_shuffle=tk.IntVar(value=1)
+        ttk.Checkbutton(batchf,text="Перемішувати перед кожною",variable=self.batch_shuffle)\
+            .pack(side=tk.LEFT)
 
         simplef=ttk.Frame(right); simplef.pack(fill=tk.X,pady=4)
         self.same_params=tk.IntVar(value=0)
@@ -210,7 +207,8 @@ class App:
         rv1=ttk.Frame(self.vidf); rv1.pack(fill=tk.X,padx=6,pady=(6,2))
         ttk.Label(rv1,text="Роздільна здатність:").pack(side=tk.LEFT)
         self.res_preset=tk.StringVar(value="Оригінал")
-        ttk.OptionMenu(rv1,self.res_preset,"Оригінал","Оригінал","1280x720","1920x1080","2560x1440","3840x2160").pack(side=tk.LEFT,padx=6)
+        ttk.OptionMenu(rv1,self.res_preset,"Оригінал","Оригінал","1280x720","1920x1080","2560x1440","3840x2160")\
+            .pack(side=tk.LEFT,padx=6)
         rv2=ttk.Frame(self.vidf); rv2.pack(fill=tk.X,padx=6,pady=(2,6))
         ttk.Label(rv2,text="FPS:").pack(side=tk.LEFT)
         self.fps_choice=tk.StringVar(value="Оригінал")
@@ -269,7 +267,6 @@ class App:
         ttk.Label(bottom,text="⏱").pack(side=tk.LEFT,padx=(12,2))
         ttk.Label(bottom,textvariable=self.elapsed_var,anchor="w").pack(side=tk.LEFT)
 
-        # Стартовий банер
         banner = """
 ============================================================
                         D R Y   M I X E R
@@ -284,6 +281,14 @@ class App:
 ------------------------------------------------------------
 """
         self.log_write(banner + "\n")
+
+        def _init_scroll():
+            right.update_idletasks()
+            right_canvas.configure(scrollregion=right_canvas.bbox("all"))
+            right_canvas.itemconfig(right_window, width=right_canvas.winfo_width())
+            right_canvas.yview_moveto(0.0)
+        self.root.after(0, _init_scroll)
+
         self.root.after(LOG_POLL_MS,self.flush_log)
 
     # ---------- Допоміжні ----------
@@ -313,12 +318,16 @@ class App:
             self.status.configure(text="Виконується…")
             self.start_ts=time.time(); self.elapsed_var.set("00:00"); self._tick_elapsed()
             try: self.progress.start(80)
-            except Exception: pass
+            except: pass
         else:
             self.status.configure(text="Готово")
             self.start_ts=None; self.elapsed_var.set("00:00")
             try: self.progress.stop()
-            except Exception: pass
+            except: pass
+
+    def _numbered_out(self, base: Path, idx: int) -> Path:
+        stem, suf = base.stem, base.suffix or ".mp4"
+        return base.with_name(f"{stem}_{idx}{suf}")
 
     # ---------- Drag&Drop ----------
     def _on_lb_press(self,e): 
@@ -396,32 +405,20 @@ class App:
         p=filedialog.asksaveasfilename(defaultextension=".mp4",filetypes=[("MP4","*.mp4")])
         if p: self.out_entry.delete(0,tk.END); self.out_entry.insert(0,p)
     def open_output_folder(self):
-        path_str = self.out_entry.get().strip()
+        path_str=self.out_entry.get().strip()
         if not path_str:
-            messagebox.showerror("Відкрити папку", "Спочатку вкажіть шлях до вихідного файлу.")
-            return
-
-        try:
-            folder = Path(path_str).expanduser().resolve().parent
+            messagebox.showerror("Відкрити папку","Спочатку вкажіть шлях до вихідного файлу."); return
+        try: folder=Path(path_str).expanduser().resolve().parent
         except Exception as e:
-            messagebox.showerror("Відкрити папку", f"Некоректний шлях: {e}")
-            return
-
+            messagebox.showerror("Відкрити папку",f"Некоректний шлях: {e}"); return
+        try: folder.mkdir(parents=True,exist_ok=True)
+        except: pass
         try:
-            folder.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-
-        try:
-            if os.name == "nt":
-                os.startfile(str(folder))                         # Windows
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(folder)])           # macOS
-            else:
-                subprocess.Popen(["xdg-open", str(folder)])       # Linux
+            if os.name=="nt": os.startfile(str(folder))
+            elif sys.platform=="darwin": subprocess.Popen(["open",str(folder)])
+            else: subprocess.Popen(["xdg-open",str(folder)])
         except Exception as e:
-            messagebox.showerror("Відкрити папку", f"Не вдалося відкрити теку:\n{e}")
-
+            messagebox.showerror("Відкрити папку",f"Не вдалося відкрити теку:\n{e}")
     def pick_audio(self):
         p=filedialog.askopenfilename(title="Вибери аудіо",
             filetypes=[("Audio","*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus"),("Усі файли","*.*")])
@@ -455,7 +452,7 @@ class App:
                     if "/" in afr and afr!="0/0":
                         num,den=afr.split("/")
                         try: fps=round(float(num)/float(den),3)
-                        except Exception: fps=afr
+                        except: fps=afr
                     else: fps=afr
                 elif t=="audio":
                     acodec=s.get("codec_name"); ch=s.get("channels"); sr=s.get("sample_rate")
@@ -542,9 +539,9 @@ class App:
             for line in p.stdout:  # type: ignore
                 if self.stop_flag.is_set():
                     try: p.terminate()
-                    except Exception: pass
+                    except: pass
                     try: p.kill()
-                    except Exception: pass
+                    except: pass
                     self.log_q.put("[СТОП] Процес перервано користувачем.\n")
                     break
                 self.log_q.put(line)
@@ -556,9 +553,9 @@ class App:
         self.stop_flag.set()
         if self.current_proc is not None:
             try: self.current_proc.terminate()
-            except Exception: pass
+            except: pass
             try: self.current_proc.kill()
-            except Exception: pass
+            except: pass
         self.status.configure(text="Зупинено користувачем")
 
     # ---------- Старт ----------
@@ -584,12 +581,7 @@ class App:
         target=parse_duration(self.dur_entry.get()) or 3600
         out_file=Path(self.out_entry.get()).expanduser().resolve(); out_file.parent.mkdir(parents=True,exist_ok=True)
 
-        if self.shuffle_mode.get()=="block":
-            bsz=self.block_size or infer_block_size(files)
-            files=shuffle_blockwise_no_seam(files,bsz)
-            files=enforce_no_adjacent_duplicates(files)
-        else: files=shuffle_full(files)
-
+        # Перша підготовка (порядок/аудіо/час)
         audio_path=self.audio_entry.get().strip()
         use_audio=len(audio_path)>0 and Path(audio_path).exists()
         audio_dur=ffprobe_duration(Path(audio_path)) if use_audio else 0.0
@@ -603,13 +595,6 @@ class App:
         if use_audio and trim and audio_dur==0:
             self.log_q.put("[ПОПЕРЕДЖЕННЯ] Аудіо 0с/недоступне — ігнорую обрізання.\n")
 
-        if self.autofill.get()==1:
-            fill=int(t_args[1]) if t_args else target
-            files=self.expand_to_duration(files,fill)
-
-        work=out_file.parent/"_vmix_work"; work.mkdir(exist_ok=True)
-        concat=work/"concat.txt"; self.build_concat(files,concat)
-
         vf, rate = self.video_filters_and_rate()
         vcodec_args, is_copy = self.choose_encoder_args(vf, rate)
 
@@ -617,78 +602,116 @@ class App:
 
         def worker():
             try:
-                if self.out_mode.get()=="norm" and not is_copy:
-                    norm=work/"_norm"; norm.mkdir(exist_ok=True)
-                    for i,src in enumerate(files,1):
-                        if self.stop_flag.is_set(): raise RuntimeError("Зупинено")
-                        outp=norm/f"clip_{i:03d}.mp4"
-                        if not outp.exists():
-                            cmd=["ffmpeg","-y","-hide_banner","-loglevel","warning",
-                                 "-fflags","+genpts","-avoid_negative_ts","make_zero","-i",src]
-                            if vf: cmd+=["-vf",vf]
-                            cmd+=rate
-                            enc,_=self.choose_encoder_args(vf,rate); cmd+=enc
-                            if enc[:2]==["-c:v","libx264"]: cmd+=["-g","60","-sc_threshold","0","-pix_fmt","yuv420p"]
-                            else: cmd+=["-g","60","-pix_fmt","yuv420p"]
-                            cmd+=["-c:a","aac","-b:a",self.abr.get(),"-ar","48000","-ac","2",
-                                  "-movflags","+faststart", str(outp)]
-                            rc=self.run_cmd(cmd)
-                            if rc!=0 or self.stop_flag.is_set(): raise RuntimeError("Зупинено або помилка")
-                    files_norm=[str((work/"_norm")/f"clip_{i:03d}.mp4") for i in range(1,len(files)+1)]
-                    self.build_concat(files_norm,concat)
+                total_jobs = int(self.batch_spin.get() or "1")
+                if total_jobs < 1: total_jobs = 1
+                base_files = list(files)
 
-                # === ФІНАЛЬНА КОМАНДА ===
-                cmd=["ffmpeg","-y","-hide_banner","-loglevel","warning",
-                     "-fflags","+genpts","-avoid_negative_ts","make_zero",
-                     "-f","concat","-safe","0","-i",str(concat)]
-                if use_audio: cmd+=["-i",audio_path]
-                if vf: cmd+=["-vf",vf]
-                cmd+=rate
-                if use_audio:
-                    # безпечний мапінг
-                    cmd+=["-map","0:v:0?","-map","1:a:0?"]
-                cmd+=vcodec_args
-                if not is_copy:
-                    if vcodec_args[:2]==["-c:v","libx264"]: cmd+=["-g","60","-sc_threshold","0","-pix_fmt","yuv420p"]
-                    else: cmd+=["-g","60","-pix_fmt","yuv420p"]
-                cmd+=["-c:a","aac","-b:a",self.abr.get(),"-ar","48000","-ac","2","-movflags","+faststart"]
-                cmd+=t_args
-                if add_shortest: cmd+=["-shortest"]
-                cmd+=[str(out_file)]
-                rc=self.run_cmd(cmd)
+                for job_idx in range(1, total_jobs + 1):
+                    if self.stop_flag.is_set(): raise RuntimeError("Зупинено")
 
-                # Ретрай без -map (для сумісності збірок)
-                if rc!=0 and use_audio and not self.stop_flag.is_set():
-                    self.log_q.put("[INFO] Повтор без явного -map (сумісність).\n")
-                    cmd_nomap=[]
-                    skip=False
-                    for tok in cmd:
-                        if skip: skip=False; continue
-                        if tok=="-map": skip=True; continue
-                        cmd_nomap.append(tok)
-                    rc=self.run_cmd(cmd_nomap)
+                    self.log_q.put(f"\n=== Компіляція {job_idx}/{total_jobs} ===\n")
 
-                if self.stop_flag.is_set():
-                    self.log_q.put("[СТОП] Збирання перервано користувачем.\n")
-                    self.root.after(0, lambda: self.status.configure(text="Зупинено користувачем"))
-                elif rc!=0:
-                    raise RuntimeError("Помилка фінального збирання")
-                else:
-                    self.log_q.put("\nГОТОВО → "+str(out_file)+"\n")
-                    self.root.after(0, lambda: (messagebox.showinfo("Готово", f"Файл: {out_file}"),
-                                                self.status.configure(text="Готово")))
+                    # Перемішування
+                    if self.batch_shuffle.get() == 1:
+                        if self.shuffle_mode.get()=="block":
+                            bsz=self.block_size or infer_block_size(base_files)
+                            job_files=shuffle_blockwise_no_seam(base_files, bsz)
+                            job_files=enforce_no_adjacent_duplicates(job_files)
+                        else:
+                            job_files=shuffle_full(base_files)
+                    else:
+                        job_files=list(base_files)
+
+                    # Автозаповнення
+                    job_target=target
+                    if self.autofill.get()==1:
+                        fill=int(t_args[1]) if t_args else job_target
+                        job_files=self.expand_to_duration(job_files, fill)
+
+                    # Робочий каталог
+                    out_file_n = self._numbered_out(out_file, job_idx) if total_jobs>1 else out_file
+                    work=out_file_n.parent/"_vmix_work"; work.mkdir(exist_ok=True)
+                    concat=work/"concat.txt"; self.build_concat(job_files, concat)
+
+                    # Нормалізація (якщо обрано)
+                    if self.out_mode.get()=="norm" and not is_copy:
+                        norm=work/"_norm"; norm.mkdir(exist_ok=True)
+                        for i,src in enumerate(job_files,1):
+                            if self.stop_flag.is_set(): raise RuntimeError("Зупинено")
+                            outp=norm/f"clip_{i:03d}.mp4"
+                            if not outp.exists():
+                                cmd=["ffmpeg","-y","-hide_banner","-loglevel","warning",
+                                     "-fflags","+genpts","-avoid_negative_ts","make_zero","-i",src]
+                                if vf: cmd+=["-vf",vf]
+                                cmd+=rate
+                                enc,_=self.choose_encoder_args(vf,rate); cmd+=enc
+                                if enc[:2]==["-c:v","libx264"]:
+                                    cmd+=["-g","60","-sc_threshold","0","-pix_fmt","yuv420p"]
+                                else:
+                                    cmd+=["-g","60","-pix_fmt","yuv420p"]
+                                cmd+=["-c:a","aac","-b:a",self.abr.get(),"-ar","48000","-ac","2",
+                                      "-movflags","+faststart", str(outp)]
+                                rc=self.run_cmd(cmd)
+                                if rc!=0 or self.stop_flag.is_set():
+                                    raise RuntimeError("Зупинено або помилка нормалізації")
+                        job_files_norm=[str((work/"_norm")/f"clip_{i:03d}.mp4") for i in range(1,len(job_files)+1)]
+                        self.build_concat(job_files_norm, concat)
+
+                    # Фінальна команда
+                    cmd=["ffmpeg","-y","-hide_banner","-loglevel","warning",
+                         "-fflags","+genpts","-avoid_negative_ts","make_zero",
+                         "-f","concat","-safe","0","-i",str(concat)]
+                    if use_audio: cmd+=["-i",audio_path]
+                    if vf: cmd+=["-vf",vf]
+                    cmd+=rate
+                    if use_audio:
+                        cmd+=["-map","0:v:0?","-map","1:a:0?"]
+                    cmd+=vcodec_args
+                    if not is_copy:
+                        if vcodec_args[:2]==["-c:v","libx264"]:
+                            cmd+=["-g","60","-sc_threshold","0","-pix_fmt","yuv420p"]
+                        else:
+                            cmd+=["-g","60","-pix_fmt","yuv420p"]
+                    cmd+=["-c:a","aac","-b:a",self.abr.get(),"-ar","48000","-ac","2","-movflags","+faststart"]
+                    cmd+=t_args
+                    if add_shortest: cmd+=["-shortest"]
+                    cmd+=[str(out_file_n)]
+
+                    rc=self.run_cmd(cmd)
+
+                    # Ретрай без -map
+                    if rc!=0 and use_audio and not self.stop_flag.is_set():
+                        self.log_q.put("[INFO] Повтор без явного -map (сумісність).\n")
+                        cmd_nomap=[]; skip=False
+                        for tok in cmd:
+                            if skip: skip=False; continue
+                            if tok=="-map": skip=True; continue
+                            cmd_nomap.append(tok)
+                        rc=self.run_cmd(cmd_nomap)
+
+                    if self.stop_flag.is_set():
+                        self.log_q.put("[СТОП] Перервано користувачем.\n")
+                        break
+                    elif rc!=0:
+                        raise RuntimeError("Помилка фінального збирання")
+
+                    self.log_q.put(f"ГОТОВО → {out_file_n}\n")
+
+                    # чистимо робочу папку після кожної збірки
+                    try:
+                        if work.exists(): shutil.rmtree(work, ignore_errors=True)
+                        self.log_q.put("[ІНФО] Тимчасова папка _vmix_work видалена.\n")
+                    except Exception as e:
+                        self.log_q.put(f"[ПОПЕРЕДЖЕННЯ] Не вдалося видалити _vmix_work: {e}\n")
+
+                self.root.after(0, lambda: (messagebox.showinfo("Готово","Пакетна збірка виконана."),
+                                            self.status.configure(text="Готово")))
             except Exception as e:
                 if str(e)!="Зупинено":
                     self.log_q.put("[ПОМИЛКА] "+str(e)+"\n")
                     self.root.after(0, lambda: self.status.configure(text="Помилка"))
                     self.root.after(0, lambda: messagebox.showerror("Помилка", str(e)))
             finally:
-                try:
-                    tmp=work
-                    if tmp.exists(): shutil.rmtree(tmp, ignore_errors=True)
-                    self.log_q.put("[ІНФО] Тимчасова папка _vmix_work видалена.\n")
-                except Exception as e:
-                    self.log_q.put(f"[ПОПЕРЕДЖЕННЯ] Не вдалося видалити _vmix_work: {e}\n")
                 self.set_running(False); self.worker=None; self.stop_flag.clear()
 
         self.worker=threading.Thread(target=worker,daemon=True); self.worker.start()
